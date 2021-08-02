@@ -1,0 +1,204 @@
+<!doctype html>
+<head>
+    <link rel="stylesheet" href="./webgl.css" type="text/css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+</head>
+<body>
+    <canvas id="glcanvas"></canvas>
+</body>
+
+<script id="vertex-shader" type="glsl">
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+
+    uniform vec2 u_resolution;
+
+    varying vec2 v_texCoord;
+
+    void main(void) {
+
+      // change pixel coordinates into clip space coordinates
+      vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;
+      
+      // flip so it is not upside down
+      gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+      v_texCoord = a_texCoord;
+    }
+</script>
+
+<script id="fragment-shader" type="glsl">
+    precision mediump float;
+    
+    // the texture
+    uniform sampler2D u_texture;
+
+    // to keep track of time to be used with the sine function
+    uniform mediump float u_time;
+
+    // texture coordinates passed from the vertex shader
+    varying vec2 v_texCoord;
+
+    void main(void) {   
+      
+      // change this to limit max / min brightness change
+      float amplitudeMultiplier = 0.5;
+
+      // to oscillate brightness following sine wave as time passes
+      mediump float oscillation = sin(u_time) * amplitudeMultiplier;
+
+      // get the texture color
+      vec4 texColor = texture2D(u_texture, v_texCoord);
+
+      // change texture's brightness based on the oscillation
+      gl_FragColor = texColor + vec4(oscillation, oscillation, oscillation, 1.0);
+    }
+</script>
+
+<script>
+    
+    // used to make sure image is loaded before calling the main render function
+    const loadImage = (url) => {
+        const image = new Image()
+        console.log(image.height)
+        image.src = url
+        image.onload = () => render(image)
+    }
+
+    const render = (image) => {
+        const canvas = document.getElementById("glcanvas")
+        const gl = canvas.getContext("webgl")
+        
+        // create shaders and the GLSL program
+        const vertShader = gl.createShader(gl.VERTEX_SHADER)
+        gl.shaderSource(vertShader, document.getElementById('vertex-shader').innerText)
+        gl.compileShader(vertShader)
+        if (!gl.getShaderParameter(vertShader, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(vertShader))
+        }
+
+        const fragShader = gl.createShader(gl.FRAGMENT_SHADER)
+        gl.shaderSource(fragShader, document.getElementById('fragment-shader').innerText)
+        gl.compileShader(fragShader)
+        if (!gl.getShaderParameter(fragShader, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(fragShader))
+        }
+
+        const prog = gl.createProgram()
+        gl.attachShader(prog, vertShader)
+        gl.attachShader(prog, fragShader)
+        gl.linkProgram(prog)
+
+        if ( !gl.getProgramParameter( prog, gl.LINK_STATUS) ) {
+            var info = gl.getProgramInfoLog(prog)
+            throw new Error('Could not compile WebGL program. \n\n' + info)
+        }
+
+        gl.useProgram(prog)
+        
+        // get vertex attributes
+        const positionLocation = gl.getAttribLocation(prog, "a_position")
+        const texCoordLocation = gl.getAttribLocation(prog, "a_texCoord")
+
+        // get uniforms
+        const textureLocation = gl.getUniformLocation(prog, "u_texture")
+        const timeLocation = gl.getUniformLocation(prog,"u_time")
+        const resolutionLocation = gl.getUniformLocation(prog, "u_resolution")
+
+        // buffer for vertex positions of 2 triangles forming a rectangle
+        const positionBuf = gl.createBuffer()
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuf)
+        
+        // set the rectangle according to texture image size
+        setRectangle(gl, 0, 0, image.width, image.height)
+  
+        // texture coordinates
+        let texCoordBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            0, 0,
+            1, 0,
+            0, 1,
+            0, 1,
+            1, 0,
+            1, 1,
+        ]), gl.STATIC_DRAW);
+
+        // create a texture
+        let texture = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_2D, texture)
+
+        // need these to use textures which size is not a power of two
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+        // load the image to the texture
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE, image)
+        
+        // instructions for drawing each animation frame
+        const drawScene = (now) => {
+        
+            // shader uses elapsed time to change brightness following sine wave
+            // can change this to make the brightness change faster or slower
+            now *= 0.001
+            gl.uniform1f(timeLocation, now)
+
+            // update canvas size and viewport
+            gl.canvas.width = gl.canvas.clientWidth
+            gl.canvas.height = gl.canvas.clientHeight
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
+
+            // set resolution
+            gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height)
+
+            // clear canvas
+            gl.clear(gl.COLOR_BUFFER_BIT)
+            
+            // turn on position attribute
+            gl.enableVertexAttribArray(positionLocation)
+            // bind position buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuf) 
+            // tell the position attribute how to get data out of position buffer
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0)
+
+            // turn on texture coordinate attribute
+            gl.enableVertexAttribArray(texCoordLocation)
+            // bind texture coordinate buffer
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuf)
+            // how to get data out of texture coordinate buffer
+            gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0)
+
+            // draw the two triangles forming a rectangle
+            gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+            // next frame
+            requestAnimationFrame(drawScene)
+        }
+
+        // start the animation
+        requestAnimationFrame(drawScene)
+    }
+
+    // helps to set the vertex positions according to image size
+    // makes a rectangle with two triangles (6 vertices)
+    function setRectangle(gl, x, y, width, height) {
+        var x1 = x;
+        var x2 = x + width;
+        var y1 = y;
+        var y2 = y + height;
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            x1, y1,
+            x2, y1,
+            x1, y2,
+            x1, y2,
+            x2, y1,
+            x2, y2,
+        ]), gl.STATIC_DRAW);
+    }
+
+    // start by loading the image to be used as a texture
+    loadImage('./assets/background.jpg')
+
+</script>
+
